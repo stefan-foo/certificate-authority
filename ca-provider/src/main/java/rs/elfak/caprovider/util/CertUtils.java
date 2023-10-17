@@ -81,8 +81,7 @@ public class CertUtils {
     public static String getSubjectName(X509Certificate certificate) {
         try {
             X500Name x500name = new JcaX509CertificateHolder(certificate).getSubject();
-            RDN cn = x500name.getRDNs(BCStyle.CN)[0];
-            return IETFUtils.valueToString(cn.getFirst().getValue());
+            return x500name.toString();
         } catch (CertificateEncodingException e) {
             return "";
         }

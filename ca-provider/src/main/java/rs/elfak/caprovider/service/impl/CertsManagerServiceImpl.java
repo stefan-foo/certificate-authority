@@ -1,14 +1,15 @@
 package rs.elfak.caprovider.service.impl;
 
 import jakarta.annotation.PostConstruct;
+import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.DERBMPString;
 import org.bouncycastle.asn1.nist.NISTObjectIdentifiers;
-import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x509.*;
 import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.X509v3CertificateBuilder;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
 import org.bouncycastle.cert.jcajce.JcaX509ExtensionUtils;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.operator.ContentSigner;
@@ -19,17 +20,18 @@ import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
 import org.bouncycastle.pkcs.jcajce.JcaPKCS12SafeBagBuilder;
 import org.bouncycastle.pkcs.jcajce.JcePKCS12MacCalculatorBuilder;
 import org.bouncycastle.pkcs.jcajce.JcePKCSPBEOutputEncryptorBuilder;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import rs.elfak.caprovider.db.tables.pojos.CertificateRequest;
 import rs.elfak.caprovider.model.CertificateSigningContext;
+import rs.elfak.caprovider.providers.SecurityNameProvider;
 import rs.elfak.caprovider.service.CertsManagerService;
 import rs.elfak.caprovider.util.CertUtils;
 
 import java.io.IOException;
 import java.math.BigInteger;
 import java.security.*;
-import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
@@ -40,12 +42,16 @@ import java.util.UUID;
 @Service
 public class CertsManagerServiceImpl implements CertsManagerService {
 
-    private static final String BC_PROVIDER = "BC";
+    final SecurityNameProvider securityNameProvider;
     private static final String KEY_ALGORITHM = "RSA";
     private static final String SIGNATURE_ALGORITHM = "SHA256withRSA";
 
     @Value("${certificate.key-size}")
     private Integer keySize;
+
+    public CertsManagerServiceImpl(SecurityNameProvider securityNameProvider) {
+        this.securityNameProvider = securityNameProvider;
+    }
 
     @PostConstruct
     private void postConstruct() {
@@ -54,7 +60,7 @@ public class CertsManagerServiceImpl implements CertsManagerService {
 
     @Override
     public KeyPair getKeyPair() throws NoSuchAlgorithmException, NoSuchProviderException {
-        KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(KEY_ALGORITHM, BC_PROVIDER);
+        KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(KEY_ALGORITHM, securityNameProvider.getName());
         keyPairGenerator.initialize(keySize);
         return keyPairGenerator.generateKeyPair();
     }
@@ -64,7 +70,7 @@ public class CertsManagerServiceImpl implements CertsManagerService {
         X500Name x500Name = new X500Name(String.format("CN=%s", request.getEmail()));
         JcaPKCS10CertificationRequestBuilder p10Builder = new JcaPKCS10CertificationRequestBuilder(x500Name, keyPair.getPublic());
         ContentSigner csrContentSigner = new JcaContentSignerBuilder(SIGNATURE_ALGORITHM)
-                .setProvider(BC_PROVIDER)
+                .setProvider(securityNameProvider.getName())
                 .build(keyPair.getPrivate());
 
         return p10Builder.build(csrContentSigner);
@@ -87,8 +93,10 @@ public class CertsManagerServiceImpl implements CertsManagerService {
         var caCert = context.getCaCertificate();
         var privateKey = context.getKeyPair().getPrivate();
 
+        X500Name issuerName = new JcaX509CertificateHolder(caCert).getSubject();
+
         X509v3CertificateBuilder issuedCertBuilder = new X509v3CertificateBuilder(
-                new X500Name(caCert.getSubjectX500Principal().getName()),
+                issuerName,
                 new BigInteger(UUID.randomUUID().toString().replace("-", ""), 16),
                 notBefore,
                 notAfter,
@@ -102,7 +110,7 @@ public class CertsManagerServiceImpl implements CertsManagerService {
         };
         GeneralName caIssuersURI = new GeneralName(GeneralName.uniformResourceIdentifier, context.getAuthorityInfoAccessURI());
         GeneralName OCSPResponderURI = new GeneralName(GeneralName.uniformResourceIdentifier, context.getOcspResponderURI());
-        AccessDescription[] accessDescriptions = new AccessDescription[]{
+        AccessDescription[] accessDescriptions = new AccessDescription[] {
                 new AccessDescription(AccessDescription.id_ad_caIssuers, caIssuersURI),
                 new AccessDescription(AccessDescription.id_ad_ocsp, OCSPResponderURI)
         };
@@ -115,12 +123,12 @@ public class CertsManagerServiceImpl implements CertsManagerService {
                 .addExtension(Extension.authorityInfoAccess, false, new AuthorityInformationAccess(accessDescriptions))
                 .addExtension(Extension.subjectAlternativeName, false, new GeneralNames(new GeneralName(GeneralName.rfc822Name, requestDetails.getEmail())));
 
-        JcaContentSignerBuilder csrBuilder = new JcaContentSignerBuilder(SIGNATURE_ALGORITHM).setProvider(BC_PROVIDER);
+        JcaContentSignerBuilder csrBuilder = new JcaContentSignerBuilder(SIGNATURE_ALGORITHM).setProvider(securityNameProvider.getName());
         ContentSigner caContentSigner = csrBuilder.build(privateKey);
         X509CertificateHolder issuedCertHolder = issuedCertBuilder.build(caContentSigner);
-        X509Certificate issuedCert = new JcaX509CertificateConverter().setProvider(BC_PROVIDER).getCertificate(issuedCertHolder);
+        X509Certificate issuedCert = new JcaX509CertificateConverter().setProvider(securityNameProvider.getName()).getCertificate(issuedCertHolder);
 
-        issuedCert.verify(caCert.getPublicKey(), BC_PROVIDER);
+        issuedCert.verify(caCert.getPublicKey(), securityNameProvider.getName());
 
         return issuedCert;
     }
@@ -130,7 +138,7 @@ public class CertsManagerServiceImpl implements CertsManagerService {
                                   PrivateKey certificateKey,
                                   String encryptionPassword,
                                   X509Certificate... chain
-    ) throws IOException, PKCSException, NoSuchAlgorithmException, OperatorCreationException, CertificateEncodingException {
+    ) throws IOException, PKCSException, NoSuchAlgorithmException, OperatorCreationException {
         char[] pwKey = encryptionPassword.toCharArray();
 
         List<PKCS12SafeBag> pkcs12ChainBags = new ArrayList<>();
@@ -149,16 +157,18 @@ public class CertsManagerServiceImpl implements CertsManagerService {
                 .addBagAttribute(PKCS12SafeBag.localKeyIdAttribute, pubKeyId);
 
         PKCS12SafeBagBuilder keyBagBuilder = new JcaPKCS12SafeBagBuilder(certificateKey)
-                .addBagAttribute(PKCS12SafeBag.friendlyNameAttribute, new DERBMPString(subjectName))
                 .addBagAttribute(PKCS12SafeBag.localKeyIdAttribute, pubKeyId);
 
         pkcs12ChainBags.add(0, certBagBuilder.build());
         PKCS12PfxPduBuilder builder = new PKCS12PfxPduBuilder();
-        builder.addData(keyBagBuilder.build());
-        builder.addEncryptedData(new JcePKCSPBEOutputEncryptorBuilder(PKCSObjectIdentifiers.pbeWithSHAAnd2_KeyTripleDES_CBC)
-                        .setProvider(BC_PROVIDER)
+
+        builder.addEncryptedData(new JcePKCSPBEOutputEncryptorBuilder(new ASN1ObjectIdentifier("2.16.840.1.101.3.4.1.42"))
+                        .setProvider(securityNameProvider.getName())
                         .build(pwKey),
-                pkcs12ChainBags.toArray(PKCS12SafeBag[]::new));
+                pkcs12ChainBags.toArray(new PKCS12SafeBag[]{}));
+        builder.addData(keyBagBuilder.build());
+//        builder.addData(pkcs12ChainBags.get(0));
+//        builder.addData(pkcs12ChainBags.get(1));
 
         return builder.build(new JcePKCS12MacCalculatorBuilder(NISTObjectIdentifiers.id_sha256), pwKey);
     }

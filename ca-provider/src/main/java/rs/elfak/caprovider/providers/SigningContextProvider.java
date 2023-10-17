@@ -47,14 +47,6 @@ public class SigningContextProvider {
         InputStream inputStream = resourceLoader.getResource(classPath.concat(caPath)).getInputStream();
         String caKey = resourceLoader.getResource(classPath.concat(caKeyPath)).getContentAsString(StandardCharsets.US_ASCII);
 
-//        KeyStore instance = KeyStore.getInstance(KeyStore.getDefaultType());
-//        instance.load(null, null);
-//        String path = this.getClass().getProtectionDomain().getCodeSource().getLocation().getPath();
-//        FileInputStream in = new FileInputStream(path.concat("/keystore"));
-//        instance.load(in, "IWgTQoDgottRCUF".toCharArray());
-//        PrivateKey key = (PrivateKey) instance.getKey(caAlias, caKeyPassword.toCharArray());
-//        X509Certificate certificate = (X509Certificate) instance.getCertificate(caAlias);
-
         context = new CertificateSigningContext(
                 caAlias,
                 CertUtils.parseCertificate(inputStream),

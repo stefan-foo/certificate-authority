@@ -4,7 +4,6 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class SecurityNameProvider {
-
     private final String BC_PROVIDER = "BC";
 
     public String getName() {

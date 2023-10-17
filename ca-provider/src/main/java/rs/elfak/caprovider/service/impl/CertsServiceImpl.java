@@ -26,6 +26,7 @@ import rs.elfak.caprovider.util.CertUtils;
 
 import java.security.KeyPair;
 import java.security.cert.X509Certificate;
+import java.util.Base64;
 import java.util.Date;
 import java.util.List;
 import java.util.Optional;
@@ -82,6 +83,10 @@ public class CertsServiceImpl implements CertsService {
         try {
             KeyPair issuingKeyPair = x509CertService.getKeyPair();
             PKCS10CertificationRequest csr = x509CertService.getCsr(certificateRequest, issuingKeyPair);
+            byte[] encoded = issuingKeyPair.getPublic().getEncoded();
+            String string = Base64.getEncoder().encodeToString(encoded);
+            byte[] encoded1 = issuingKeyPair.getPrivate().getEncoded();
+            String prive = Base64.getEncoder().encodeToString(encoded1);
             X509Certificate certificate = x509CertService.signCsr(contextProvider.getContext(), csr, certificateRequest, new Date(), new Date(System.currentTimeMillis() + 365L * 24 * 60 * 60 * 1000));
 
             Integer issuingCertId = certificateRepo.getCertIdForAlias(contextProvider.getCaAlias());
